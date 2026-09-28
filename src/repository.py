@@ -54,7 +54,46 @@ class SQLiteRepository:
                     created_at TEXT NOT NULL,
                     PRIMARY KEY(actor_id, idem_key)
                 );
+                CREATE TABLE IF NOT EXISTS followups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    contact_id TEXT NOT NULL,
+                    followup_date TEXT NOT NULL,
+                    data TEXT NOT NULL,
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(contact_id, followup_date)
+                );
+                CREATE INDEX IF NOT EXISTS idx_followups_contact
+                    ON followups(contact_id, followup_date);
+                CREATE TABLE IF NOT EXISTS followup_revisions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    followup_id INTEGER NOT NULL,
+                    contact_id TEXT NOT NULL,
+                    followup_date TEXT NOT NULL,
+                    data TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    revised_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_followup_revisions
+                    ON followup_revisions(contact_id, id);
             """)
+
+    @staticmethod
+    def _followup_from_row(row):
+        item = json.loads(row["data"])
+        item.update(
+            {
+                "id": row["id"],
+                "contact_id": row["contact_id"],
+                "followup_date": row["followup_date"],
+                "created_by": row["created_by"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+        )
+        return item
 
     @staticmethod
     def _entity_from_row(row):
@@ -195,6 +234,104 @@ class SQLiteRepository:
                 "VALUES (?, ?, ?, ?)",
                 (actor_id, idem_key, entity_id, utcnow()),
             )
+
+    def insert_followup(self, contact_id, followup_date, data, actor_id):
+        now = utcnow()
+        payload = json.dumps(data, ensure_ascii=False, sort_keys=True)
+        with self._connect() as connection:
+            try:
+                cursor = connection.execute(
+                    "INSERT INTO followups(contact_id, followup_date, data, created_by, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (contact_id, followup_date, payload, actor_id, now, now),
+                )
+            except sqlite3.IntegrityError:
+                raise ConflictError(
+                    "followup already recorded for %s on %s (one person one record per day)"
+                    % (contact_id, followup_date)
+                )
+            followup_id = cursor.lastrowid
+        return self.get_followup(followup_id)
+
+    def get_followup(self, followup_id):
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM followups WHERE id = ?", (followup_id,)
+            ).fetchone()
+        return self._followup_from_row(row) if row else None
+
+    def find_followup(self, contact_id, followup_date):
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM followups WHERE contact_id = ? AND followup_date = ?",
+                (contact_id, followup_date),
+            ).fetchone()
+        return self._followup_from_row(row) if row else None
+
+    def list_followups(self, contact_id):
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM followups WHERE contact_id = ? ORDER BY followup_date",
+                (contact_id,),
+            ).fetchall()
+        return [self._followup_from_row(row) for row in rows]
+
+    def amend_followup(self, followup_id, data, actor_id, reason):
+        now = utcnow()
+        payload = json.dumps(data, ensure_ascii=False, sort_keys=True)
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM followups WHERE id = ?", (followup_id,)
+            ).fetchone()
+            if not row:
+                raise NotFoundError("followup not found: " + str(followup_id))
+            old = json.loads(row["data"])
+            connection.execute(
+                "INSERT INTO followup_revisions"
+                "(followup_id, contact_id, followup_date, data, reason, revised_by, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    followup_id,
+                    row["contact_id"],
+                    row["followup_date"],
+                    json.dumps(old, ensure_ascii=False, sort_keys=True),
+                    reason,
+                    actor_id,
+                    now,
+                ),
+            )
+            connection.execute(
+                "UPDATE followups SET data = ?, updated_at = ? WHERE id = ?",
+                (payload, now, followup_id),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return self.get_followup(followup_id)
+
+    def list_followup_revisions(self, contact_id):
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM followup_revisions WHERE contact_id = ? ORDER BY id",
+                (contact_id,),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "followup_id": row["followup_id"],
+                "followup_date": row["followup_date"],
+                "data": json.loads(row["data"]),
+                "reason": row["reason"],
+                "revised_by": row["revised_by"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
 
     def ping(self):
         with self._connect() as connection:
