@@ -1,8 +1,15 @@
 from uuid import uuid4
 
 from .audit import AuditTrail
-from .domain import ConflictError, NotFoundError
-from .rules import RuleEngine
+from .domain import ConflictError, NotFoundError, ValidationError
+from .rules import (
+    RuleEngine,
+    evaluate_release,
+    last_exposure_day,
+    observation_window,
+    stamp,
+    to_iso,
+)
 
 
 class DomainService:
@@ -56,7 +63,50 @@ class DomainService:
             updated["status"],
             {"patch": patch},
         )
+        if (
+            entity["kind"] == "case"
+            and action == "lab_positive"
+            and updated["status"] == "confirmed"
+        ):
+            self._recalculate_contact_windows(actor, updated)
         return updated
+
+    def _recalculate_contact_windows(self, actor, confirmed_case):
+        """病例确诊后，关联接触者按最后接触日重新计算观察窗口。"""
+        contacts = self.repository.find_entities(
+            "contact", "case_id", confirmed_case["id"]
+        )
+        affected = []
+        for contact in contacts:
+            start, due = observation_window(last_exposure_day(contact["data"]))
+            new_data = dict(contact["data"])
+            new_data["followup_start"] = to_iso(start)
+            new_data["due_at"] = to_iso(due)
+            new_data["window_recalculated_at"] = stamp()
+            new_data["window_source"] = {
+                "case_id": confirmed_case["id"],
+                "confirmed_at": confirmed_case["updated_at"],
+            }
+            was_completed = contact["status"] == "completed"
+            next_status = "following" if was_completed else contact["status"]
+            updated = self.repository.update_entity(
+                contact["id"], contact["version"], next_status, new_data
+            )
+            self.audit.record(
+                contact["id"],
+                actor,
+                "recalculate_window",
+                contact["status"],
+                next_status,
+                {
+                    "case_id": confirmed_case["id"],
+                    "followup_start": to_iso(start),
+                    "due_at": to_iso(due),
+                    "reopened": was_completed,
+                },
+            )
+            affected.append(updated["id"])
+        return affected
 
     def get(self, entity_id):
         entity = self.repository.get_entity(entity_id)
@@ -68,6 +118,22 @@ class DomainService:
         if kind:
             kind = self.rules.normalize_kind(kind)
         return self.repository.list_entities(kind=kind, status=status)
+
+    def timeline(self, entity_id):
+        entity = self.get(entity_id)
+        if entity["kind"] != "contact":
+            raise ValidationError("时间线仅支持接触者(contact)对象")
+        followups = []
+        for day in sorted((entity["data"].get("followups") or {}).keys()):
+            record = dict(entity["data"]["followups"][day])
+            record["revision_count"] = len(record.get("revisions", []))
+            followups.append(record)
+        return {
+            "contact": entity,
+            "release_evaluation": evaluate_release(entity["data"]),
+            "followups": followups,
+            "audit": self.repository.list_audit(entity_id=entity_id),
+        }
 
     def audit_log(self, entity_id=None):
         return self.repository.list_audit(entity_id=entity_id)

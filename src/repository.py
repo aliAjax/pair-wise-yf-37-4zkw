@@ -127,11 +127,13 @@ class SQLiteRepository:
                     "version conflict: expected %s, found %s"
                     % (expected_version, current_version)
                 )
-            connection.execute(
+            cursor = connection.execute(
                 "UPDATE entities SET status = ?, version = version + 1, data = ?, updated_at = ? "
                 "WHERE id = ? AND version = ?",
                 (status, payload, now, entity_id, current_version),
             )
+            if cursor.rowcount == 0:
+                raise ConflictError("entity was modified concurrently: " + entity_id)
             connection.commit()
         except Exception:
             connection.rollback()

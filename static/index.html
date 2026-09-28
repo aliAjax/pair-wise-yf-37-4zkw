@@ -5,30 +5,430 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>传染病暴发调查与接触网络</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; color: #1f2937; }
-    main { max-width: 820px; margin: auto; }
-    pre { background: #f3f4f6; padding: 1rem; border-radius: 8px; overflow-x: auto; }
-    button { padding: .5rem .8rem; cursor: pointer; }
+    :root { --ok:#15803d; --bad:#b91c1c; --line:#d1d5db; --bg:#f8fafc; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; color: #1f2937; background: var(--bg); }
+    main { max-width: 1080px; margin: auto; padding: 1.5rem; }
+    h1 { font-size: 1.4rem; }
+    h2 { font-size: 1.05rem; margin: 1.5rem 0 .6rem; border-left: 4px solid #2563eb; padding-left: .5rem; }
+    .card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 1rem; margin-bottom: 1rem; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    label { display: block; font-size: .8rem; color: #4b5563; margin: .35rem 0 .15rem; }
+    input, select, textarea { width: 100%; padding: .4rem .5rem; border: 1px solid var(--line); border-radius: 6px; font-size: .9rem; }
+    button { padding: .42rem .8rem; border: 1px solid #2563eb; background: #2563eb; color: #fff; border-radius: 6px; cursor: pointer; font-size: .85rem; }
+    button.secondary { background: #fff; color: #2563eb; }
+    button.danger { border-color: var(--bad); background: var(--bad); }
+    button.ghost { border-color: var(--line); background: #fff; color: #374151; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-top: .6rem; }
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    th, td { border-bottom: 1px solid #e5e7eb; padding: .4rem .5rem; text-align: left; vertical-align: top; }
+    th { background: #f1f5f9; font-weight: 600; }
+    .tag { display: inline-block; padding: .1rem .45rem; border-radius: 999px; font-size: .72rem; }
+    .tag.reported, .tag.identified { background: #fef3c7; color: #92400e; }
+    .tag.investigating, .tag.following { background: #dbeafe; color: #1e40af; }
+    .tag.confirmed { background: #fee2e2; color: #991b1b; }
+    .tag.completed, .tag.recovered, .tag.closed { background: #dcfce7; color: #166534; }
+    .tag.probable { background: #f3e8ff; color: #6b21a8; }
+    .sym { color: var(--bad); }
+    .ok-text { color: var(--ok); font-weight: 600; }
+    .bad-text { color: var(--bad); font-weight: 600; }
+    pre { background: #0f172a; color: #e2e8f0; padding: .8rem; border-radius: 8px; overflow-x: auto; font-size: .78rem; max-height: 260px; overflow-y: auto; }
+    .muted { color: #6b7280; font-size: .8rem; }
+    .checks label { display: inline-flex; align-items: center; gap: .25rem; margin: .2rem .8rem .2rem 0; font-size: .85rem; color: #1f2937; }
+    .checks input { width: auto; }
+    #message { margin: .6rem 0; font-size: .88rem; white-space: pre-wrap; }
+    .timeline-item { border-left: 2px solid #cbd5e1; padding: .3rem 0 .3rem .8rem; margin-left: .3rem; font-size: .84rem; }
+    .timeline-item.abnormal { border-left-color: var(--bad); }
+    .timeline-item .meta { color: #6b7280; font-size: .75rem; }
   </style>
 </head>
 <body>
 <main>
   <h1>传染病暴发调查与接触网络</h1>
-  <p>这是最小演示页面。使用浏览器或 curl 调用 JSON API。</p>
-  <p><button onclick="checkHealth()">检查服务状态</button></p>
-  <pre id="result">等待操作</pre>
-  <h2>常用接口</h2>
-  <pre>GET  /health
-GET  /api/&lt;kind&gt;
-POST /api/&lt;kind&gt;
-GET  /api/entities/&lt;id&gt;
-POST /api/entities/&lt;id&gt;/actions</pre>
+  <p class="muted">接触者每日随访按天独立留存，一人一天一份，可订正留痕；解除从最近一次异常重新起算，连续 14 天无症状且观察期满方可放行。</p>
+  <div class="row">
+    <span class="muted">操作角色</span>
+    <select id="role" style="width:auto">
+      <option value="admin">admin（管理员）</option>
+      <option value="clinician">clinician（临床医生）</option>
+      <option value="investigator" selected>investigator（流调员）</option>
+      <option value="lab">lab（检验）</option>
+      <option value="viewer">viewer（只读）</option>
+    </select>
+    <button class="secondary" onclick="checkHealth()">检查服务</button>
+    <button class="ghost" onclick="loadDemo()">载入演示数据</button>
+    <button class="ghost" onclick="refreshAll()">刷新</button>
+  </div>
+  <div id="message"></div>
+
+  <div class="grid">
+    <section>
+      <h2>病例</h2>
+      <div class="card">
+        <div class="grid">
+          <div><label>person_id</label><input id="c-person" value="P-101"></div>
+          <div><label>发病日期</label><input id="c-onset" type="date"></div>
+          <div><label>地点</label><input id="c-location" value="District-A"></div>
+          <div><label>症状(逗号分隔)</label><input id="c-symptoms" value="fever,cough"></div>
+        </div>
+        <div class="row"><button onclick="createCase()">上报病例</button></div>
+      </div>
+      <table>
+        <thead><tr><th>ID</th><th>对象</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="case-rows"></tbody>
+      </table>
+
+      <h2>接触者</h2>
+      <div class="card">
+        <div class="grid">
+          <div><label>关联病例 ID</label><input id="t-case"></div>
+          <div><label>person_id</label><input id="t-person" value="P-201"></div>
+          <div><label>首次接触日</label><input id="t-start" type="date"></div>
+          <div><label>最后接触日（可空）</label><input id="t-end" type="date"></div>
+        </div>
+        <div class="row"><button onclick="createContact()">登记接触者</button></div>
+      </div>
+      <table>
+        <thead><tr><th>ID</th><th>对象</th><th>观察窗口</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="contact-rows"></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>接触者时间线与解除</h2>
+      <div class="card">
+        <div class="row">
+          <label style="margin:0">当前接触者</label>
+          <select id="selected-contact" style="flex:1" onchange="renderTimeline()"></select>
+          <button class="ghost" onclick="renderTimeline()">查看时间线</button>
+        </div>
+        <div id="eval-box"></div>
+
+        <h2 style="margin-top:1rem">登记 / 订正每日随访</h2>
+        <div class="grid">
+          <div><label>随访日期</label><input id="f-date" type="date"></div>
+          <div><label>状态</label>
+            <select id="f-symptom-select" onchange="toggleSymptoms()">
+              <option value="none">无症状</option>
+              <option value="sick">有症状</option>
+            </select>
+          </div>
+        </div>
+        <div id="f-symptom-list" class="checks" style="display:none; margin-top:.4rem">
+          <label><input type="checkbox" value="fever">发热</label>
+          <label><input type="checkbox" value="cough">咳嗽</label>
+          <label><input type="checkbox" value="sore_throat">咽痛</label>
+          <label><input type="checkbox" value="fatigue">乏力</label>
+          <label><input type="checkbox" value="diarrhea">腹泻</label>
+          <label><input type="checkbox" value="dyspnea">呼吸困难</label>
+        </div>
+        <label>备注</label><input id="f-note" placeholder="可选">
+        <label>订正原因（仅订正时必填）</label><input id="f-reason" placeholder="例如：误录，本人无发热">
+        <div class="row">
+          <button onclick="recordFollowup()">登记当日随访</button>
+          <button class="secondary" onclick="reviseFollowup()">订正当日记录</button>
+          <button class="danger" onclick="completeFollowup()">评估并解除观察</button>
+        </div>
+      </div>
+
+      <h2>随访时间线</h2>
+      <div id="timeline-box" class="card"><span class="muted">选择接触者后展示</span></div>
+      <h2>审计记录</h2>
+      <pre id="audit-box">无</pre>
+    </section>
+  </div>
 </main>
 <script>
-async function checkHealth() {
-  const response = await fetch('/health');
-  document.getElementById('result').textContent = JSON.stringify(await response.json(), null, 2);
+const state = { cases: [], contacts: [], timeline: null };
+
+function today(offsetDays = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return d.toISOString().slice(0, 10);
 }
+
+async function api(path, options = {}) {
+  const headers = Object.assign({
+    'Content-Type': 'application/json',
+    'X-User-Id': 'demo-user',
+    'X-Role': document.getElementById('role').value,
+  }, options.headers || {});
+  const res = await fetch(path, Object.assign({}, options, { headers }));
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error((body.type || 'Error') + ': ' + body.error);
+  }
+  return body;
+}
+
+function flash(message, ok = false) {
+  const el = document.getElementById('message');
+  el.textContent = message;
+  el.className = ok ? 'ok-text' : 'bad-text';
+}
+
+function caseButton(id, action, data, label, cls) {
+  const payload = JSON.stringify(data).replace(/"/g, '&quot;');
+  return '<button class="' + (cls || '') + '" data-case-id="' + id + '" data-action="' + action +
+    '" data-payload="' + payload + '">' + label + '</button>';
+}
+
+document.addEventListener('click', (event) => {
+  const btn = event.target.closest('button[data-case-id]');
+  if (btn) {
+    caseAction(btn.dataset.caseId, btn.dataset.action, JSON.parse(btn.dataset.payload || '{}'));
+  }
+});
+
+function tag(status) {  const labels = {
+    reported: '已报告', investigating: '调查中', confirmed: '确诊', probable: '疑似',
+    recovered: '康复', closed: '关闭', identified: '已识别', following: '随访中', completed: '已解除',
+  };
+  return '<span class="tag ' + status + '">' + (labels[status] || status) + '</span>';
+}
+
+function esc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+async function checkHealth() {
+  try {
+    const body = await api('/health');
+    flash('服务状态：' + body.status, true);
+  } catch (e) { flash(e.message); }
+}
+
+async function createCase() {
+  try {
+    await api('/api/cases', { method: 'POST', body: JSON.stringify({
+      person_id: val('c-person'), onset_date: val('c-onset'),
+      location: val('c-location'), symptoms: val('c-symptoms').split(',').map(s => s.trim()).filter(Boolean),
+    })});
+    flash('病例已上报', true);
+    await refreshAll();
+  } catch (e) { flash(e.message); }
+}
+
+async function caseAction(id, action, data) {
+  try {
+    await api('/api/entities/' + id + '/actions', {
+      method: 'POST', body: JSON.stringify({ action, data }),
+    });
+    flash('动作 ' + action + ' 完成', true);
+    await refreshAll();
+    await renderTimeline();
+  } catch (e) { flash(e.message); }
+}
+
+async function createContact() {
+  const payload = { case_id: val('t-case'), person_id: val('t-person'), exposure_start: val('t-start') };
+  if (val('t-end')) payload.exposure_end = val('t-end');
+  try {
+    const contact = await api('/api/contacts', { method: 'POST', body: JSON.stringify(payload) });
+    await api('/api/entities/' + contact.id + '/actions', {
+      method: 'POST', body: JSON.stringify({ action: 'begin_followup', data: {} }),
+    });
+    flash('接触者已登记并开始随访（窗口按最后接触日自动计算）', true);
+    await refreshAll();
+    document.getElementById('selected-contact').value = contact.id;
+    await renderTimeline();
+  } catch (e) { flash(e.message); }
+}
+
+function val(id) { return document.getElementById(id).value; }
+
+function renderLists() {
+  const caseBody = document.getElementById('case-rows');
+  caseBody.innerHTML = state.cases.map(c => {
+    const d = c.data;
+    const buttons = [];
+    if (c.status === 'reported') buttons.push(caseButton(c.id, 'triage', {clinician: 'C-1'}, '分诊', 'secondary'));
+    if (c.status === 'investigating') {
+      buttons.push(caseButton(c.id, 'lab_positive', {lab_id: 'L-1', result: 'positive'}, '实验室确诊', 'danger'));
+      buttons.push(caseButton(c.id, 'mark_probable', {epi_link: 'E-1'}, '标记疑似', 'secondary'));
+    }
+    if (c.status === 'confirmed' || c.status === 'probable')
+      buttons.push(caseButton(c.id, 'recover', {recovered_at: today()}, '康复', 'secondary'));
+    if (c.status === 'recovered')
+      buttons.push(caseButton(c.id, 'close', {outcome: 'recovered'}, '关闭', 'secondary'));
+    return '<tr><td>' + c.id.slice(0, 8) + '</td><td>' + esc(d.person_id) + '<br><span class="muted">' + esc(d.onset_date) + ' ' + esc(d.location) + '</span></td><td>' + tag(c.status) + '</td><td><div class="row" style="margin:0">' + buttons.join('') + '</div></td></tr>';
+  }).join('') || '<tr><td colspan="4" class="muted">暂无病例</td></tr>';
+
+  const firstCase = state.cases[0];
+  if (firstCase && !val('t-case')) document.getElementById('t-case').value = firstCase.id;
+
+  const body = document.getElementById('contact-rows');
+  body.innerHTML = state.contacts.map(t => {
+    const d = t.data;
+    const windowText = (d.followup_start || '-') + '<br><span class="muted">至 ' + esc(d.due_at || '-') + '</span>';
+    return '<tr><td>' + t.id.slice(0, 8) + '</td><td>' + esc(d.person_id) + '<br><span class="muted">病例 ' + esc(String(d.case_id).slice(0, 8)) + '</span></td><td>' + windowText + '</td><td>' + tag(t.status) + '</td><td><button class="ghost" onclick="selectContact(\'' + t.id + '\')">时间线</button></td></tr>';
+  }).join('') || '<tr><td colspan="5" class="muted">暂无接触者</td></tr>';
+
+  const select = document.getElementById('selected-contact');
+  const current = select.value;
+  select.innerHTML = state.contacts.map(t => '<option value="' + t.id + '">' + t.data.person_id + ' (' + t.id.slice(0, 8) + ')</option>').join('');
+  if (current && state.contacts.some(t => t.id === current)) select.value = current;
+}
+
+async function selectContact(id) {
+  document.getElementById('selected-contact').value = id;
+  await renderTimeline();
+}
+
+function toggleSymptoms() {
+  document.getElementById('f-symptom-list').style.display =
+    document.getElementById('f-symptom-select').value === 'sick' ? 'block' : 'none';
+}
+
+function chosenSymptoms() {
+  if (document.getElementById('f-symptom-select').value === 'none') return [];
+  return [...document.querySelectorAll('#f-symptom-list input:checked')].map(i => i.value);
+}
+
+async function recordFollowup() {
+  const id = val('selected-contact');
+  if (!id) return flash('请先选择接触者');
+  try {
+    await api('/api/entities/' + id + '/actions', { method: 'POST', body: JSON.stringify({
+      action: 'record_followup',
+      data: { followup_date: val('f-date'), symptoms: chosenSymptoms(), note: val('f-note') },
+    })});
+    flash('随访已登记', true);
+    await refreshAll();
+    await renderTimeline();
+  } catch (e) { flash(e.message); }
+}
+
+async function reviseFollowup() {
+  const id = val('selected-contact');
+  if (!id) return flash('请先选择接触者');
+  if (!val('f-reason')) return flash('订正必须填写订正原因（旧值仍会保留在 revisions 中）');
+  try {
+    await api('/api/entities/' + id + '/actions', { method: 'POST', body: JSON.stringify({
+      action: 'revise_followup',
+      data: { followup_date: val('f-date'), symptoms: chosenSymptoms(), note: val('f-note'), reason: val('f-reason') },
+    })});
+    flash('随访已订正，旧值已留痕', true);
+    await refreshAll();
+    await renderTimeline();
+  } catch (e) { flash(e.message); }
+}
+
+async function completeFollowup() {
+  const id = val('selected-contact');
+  if (!id) return flash('请先选择接触者');
+  if (!confirm('将按最近一次异常重新起算评估解除条件，确认继续？')) return;
+  try {
+    await api('/api/entities/' + id + '/actions', { method: 'POST', body: JSON.stringify({
+      action: 'complete_followup', data: { as_of: val('f-date') || today() },
+    })});
+    flash('已满足连续 14 天无症状，医学观察解除', true);
+    await refreshAll();
+    await renderTimeline();
+  } catch (e) { flash(e.message); }
+}
+
+function renderEvaluation(ev) {
+  const rows = [
+    ['最后接触日', ev.last_exposure_date],
+    ['观察窗口', ev.window_start + ' 至 ' + ev.due_at],
+    ['最近一次异常', ev.last_abnormal_date || '无'],
+    ['最早可解除日', ev.effective_due_at + '（异常后重新起算）'],
+    ['需无症状区间', ev.required_range.join(' 至 ')],
+    ['当前连续无症状天数', ev.consecutive_asymptomatic_days + ' 天'],
+  ];
+  const table = rows.map(r => '<tr><th>' + r[0] + '</th><td>' + esc(r[1]) + '</td></tr>').join('');
+  const result = ev.eligible
+    ? '<p class="ok-text">✓ 满足解除条件</p>'
+    : '<p class="bad-text">✗ 暂不能解除</p><ul>' + ev.reasons.map(r => '<li>' + esc(r) + '</li>').join('') + '</ul>';
+  document.getElementById('eval-box').innerHTML = '<table>' + table + '</table>' + result;
+}
+
+function renderTimelineItems(timeline) {
+  if (!timeline.followups.length) return '<span class="muted">尚无每日随访记录</span>';
+  return timeline.followups.map(f => {
+    const abnormal = f.symptoms.length > 0;
+    const body = abnormal
+      ? '<span class="sym">' + f.symptom_labels.map(esc).join('、') + '</span>'
+      : '<span class="ok-text">无症状</span>';
+    const revisions = f.revisions.map(r =>
+      '<div class="meta">订正：' + esc((r.symptom_labels && r.symptom_labels.join('、')) || '无症状') +
+      ' — ' + esc(r.reason || '') + '（' + esc(r.revised_by) + ' @ ' + esc(r.revised_at) + '）</div>'
+    ).join('');
+    return '<div class="timeline-item' + (abnormal ? ' abnormal' : '') + '">'
+      + '<strong>' + f.followup_date + '</strong> ' + body
+      + (f.note ? ' <span class="muted">' + esc(f.note) + '</span>' : '')
+      + '<div class="meta">' + esc(f.recorded_by) + ' @ ' + esc(f.recorded_at)
+      + (f.revision_count ? '；订正 ' + f.revision_count + ' 次' : '') + '</div>'
+      + revisions + '</div>';
+  }).join('');
+}
+
+async function renderTimeline() {
+  const id = val('selected-contact');
+  if (!id) {
+    document.getElementById('timeline-box').innerHTML = '<span class="muted">选择接触者后展示</span>';
+    document.getElementById('audit-box').textContent = '无';
+    document.getElementById('eval-box').innerHTML = '';
+    return;
+  }
+  try {
+    const timeline = await api('/api/entities/' + id + '/timeline');
+    state.timeline = timeline;
+    renderEvaluation(timeline.release_evaluation);
+    document.getElementById('timeline-box').innerHTML = renderTimelineItems(timeline);
+    document.getElementById('audit-box').textContent = JSON.stringify(timeline.audit, null, 2);
+    if (!val('f-date')) document.getElementById('f-date').value = today();
+  } catch (e) { flash(e.message); }
+}
+
+async function refreshAll() {
+  const [cases, contacts] = await Promise.all([
+    api('/api/cases'), api('/api/contacts'),
+  ]);
+  state.cases = cases.items;
+  state.contacts = contacts.items;
+  renderLists();
+}
+
+async function loadDemo() {
+  try {
+    const role = document.getElementById('role');
+    role.value = 'admin';
+    const onset = today(-6);
+    document.getElementById('c-person').value = 'P-101';
+    document.getElementById('c-onset').value = onset;
+    const createdCase = await api('/api/cases', { method: 'POST', body: JSON.stringify({
+      person_id: 'P-101', onset_date: onset, location: 'District-A', symptoms: ['fever'],
+    })});
+    await api('/api/entities/' + createdCase.id + '/actions', {
+      method: 'POST', body: JSON.stringify({ action: 'triage', data: { clinician: 'C-1' } }),
+    });
+    // 注意：病例在接触者满窗后才确诊，用于演示重新起算
+    const contact = await api('/api/contacts', { method: 'POST', body: JSON.stringify({
+      case_id: createdCase.id, person_id: 'P-201', exposure_start: today(-20),
+    })});
+    await api('/api/entities/' + contact.id + '/actions', {
+      method: 'POST', body: JSON.stringify({ action: 'begin_followup', data: {} }),
+    });
+    await refreshAll();
+    document.getElementById('selected-contact').value = contact.id;
+    document.getElementById('f-date').value = today(-5);
+    await renderTimeline();
+    flash('演示数据已载入：病例调查中、接触者随访中。可先登记几天随访（含一次发热），再对病例执行「实验室确诊」观察窗口重算。', true);
+  } catch (e) { flash(e.message); }
+}
+
+window.addEventListener('DOMContentLoaded', async () => {
+  document.getElementById('c-onset').value = today(-6);
+  document.getElementById('t-start').value = today(-20);
+  document.getElementById('f-date').value = today();
+  try {
+    await refreshAll();
+    await renderTimeline();
+  } catch (e) { flash(e.message); }
+});
 </script>
 </body>
 </html>
